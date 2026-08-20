@@ -1,0 +1,10 @@
+{
+  "name": "Foodgo + wp 0.1",
+  "description": "Foodgo food ordering web application faithfully recreating the mobile \u0026 responsive ordering experience with burger builder, checkout, profile and support.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
