@@ -15,14 +15,22 @@ export interface HealthCheckResult {
 export async function fetchFoodgoConfig(): Promise<FoodgoPublicConfig | null> {
   const config = getRuntimeConfig();
 
-  // If no WP URL configured yet, try checking /api/connection/public from admin.php setup
+  // If no WP URL configured yet, try checking /config/connection-public.json or /api/connection/public from admin.php setup
   if (!config.wpUrl) {
     try {
-      const pubRes = await fetch('/api/connection/public');
+      const pubRes = await fetch('/config/connection-public.json');
       if (pubRes.ok) {
         const pubData = await pubRes.json();
         if (pubData.wpUrl) {
           updateRuntimeConfig({ wpUrl: pubData.wpUrl });
+        }
+      } else {
+        const fallbackRes = await fetch('/api/connection/public');
+        if (fallbackRes.ok) {
+          const fallbackData = await fallbackRes.json();
+          if (fallbackData.wpUrl) {
+            updateRuntimeConfig({ wpUrl: fallbackData.wpUrl });
+          }
         }
       }
     } catch {

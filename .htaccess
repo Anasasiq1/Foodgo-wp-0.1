@@ -1,17 +1,19 @@
 # ==============================================================================
-# Foodgo Gourmet Ordering Platform - Apache, OpenLiteSpeed & Shared Hosting Config
+# Foodgo Headless Ordering Platform - Apache, OpenLiteSpeed & cPanel/aaPanel Config
 # ==============================================================================
+
+# Explicitly set index.html as the primary customer application entry point
+DirectoryIndex index.html
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteBase /
 
     # 1. Protect hidden files, environment files, and sensitive directories
-    RewriteRule ^(\.git|\.env|config/|database/|storage/|data/|backups/) - [F,L,NC]
+    RewriteRule ^(\.git|\.env|config/\.htaccess|database/|storage/|data/|backups/) - [F,L,NC]
 
-    # 2. Allow direct execution of WordPress Admin Gateway and Plugin Download
+    # 2. Allow direct execution of WordPress Admin Gateway and Plugin ZIP
     RewriteRule ^admin\.php$ - [L]
-    RewriteRule ^index\.php$ - [L]
     RewriteRule ^foodgo-headless-connector\.zip$ - [L]
 
     # 3. If requested resource is an existing file or directory, serve it directly
@@ -20,16 +22,12 @@
     RewriteRule ^ - [L]
 
     # 4. SPA Route Fallback:
-    # If root index.html exists (e.g. uploaded dist contents directly to public_html), serve it
+    # Route all frontend client routes directly to index.html
     RewriteCond %{DOCUMENT_ROOT}/index.html -f
     RewriteRule ^ index.html [L]
 
-    # If dist/index.html exists (e.g. subfolder deployment), serve it
-    RewriteCond %{DOCUMENT_ROOT}/dist/index.html -f
-    RewriteRule ^ dist/index.html [L]
-
-    # Fallback to index.php gateway
-    RewriteRule ^ index.php [L]
+    # Subfolder / general fallback
+    RewriteRule ^ index.html [L]
 </IfModule>
 
 # Prevent directory index browsing
@@ -46,8 +44,8 @@ Options -Indexes
     </IfModule>
 </FilesMatch>
 
-# Block access to JSON, log, and configuration files directly
-<FilesMatch "\.(json|sql|lock|log|sh|env)$">
+# Block access to JSON, SQL, log, and configuration files directly (except connection-public.json)
+<FilesMatch "^(?!connection-public\.json$).*\.(json|sql|lock|log|sh|env)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
