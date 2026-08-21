@@ -38,18 +38,23 @@ Foodgo/
 │       ├── admin/          # Minimal connection settings page
 │       └── readme.txt
 │
-└── docs/                   # Complete architecture & deployment manuals
-    ├── ARCHITECTURE.md
-    ├── WORDPRESS-SETUP.md
-    ├── WOOCOMMERCE-SETUP.md
-    ├── PLUGIN-INSTALLATION.md
-    ├── WOOCOMMERCE-PLUGIN-COMPATIBILITY.md
-    ├── FRONTEND-CONNECTION.md
-    ├── API.md
-    ├── SECURITY.md
-    ├── AAPANEL.md
-    └── DEPLOYMENT.md
+└── docs/                   # Complete architecture, troubleshooting & deployment manuals
+    ├── COMPLETE-DEPLOYMENT-GUIDE.md        # aaPanel, cPanel, Apache, Nginx, VPS & Node.js
+    ├── TROUBLESHOOTING-GUIDE.md            # 500, 503, PHP-FPM, CORS, 404 & UPI fixes
+    ├── WORDPRESS-WOOCOMMERCE-INTEGRATION.md # Plugin setup, REST API & Catalog Sync
+    └── ADMIN-AND-SECURITY.md               # admin.php portal & server security
 ```
+
+---
+
+## 📚 Complete Documentation Guides
+
+| Guide | Description |
+| :--- | :--- |
+| **[🚀 Complete Deployment Guide](docs/COMPLETE-DEPLOYMENT-GUIDE.md)** | Step-by-step installation on aaPanel, cPanel, Linux VPS (Apache/Nginx), and Node.js. |
+| **[🛠️ Troubleshooting Guide](docs/TROUBLESHOOTING-GUIDE.md)** | Instant solutions for 500 Internal Server Error, 503 Service Unavailable, PHP-FPM, CORS, and SPA routing. |
+| **[🔌 WordPress & WooCommerce Guide](docs/WORDPRESS-WOOCOMMERCE-INTEGRATION.md)** | Bridge plugin installation, REST API credentials, and kitchen customization setup. |
+| **[🛡️ Admin & Security Guide](docs/ADMIN-AND-SECURITY.md)** | `/admin.php` portal setup, permission hardening, and secure credential storage. |
 
 ---
 
