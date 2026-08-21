@@ -26,7 +26,7 @@ export async function createPluginZip(): Promise<string> {
 
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(publicZipPath);
-    const archive = new archiver.ZipArchive({ zlib: { level: 9 } });
+    const archive = typeof archiver === 'function' ? archiver('zip', { zlib: { level: 9 } }) : new archiver.ZipArchive({ zlib: { level: 9 } });
 
     output.on('close', () => {
       try {
