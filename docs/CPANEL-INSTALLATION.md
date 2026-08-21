@@ -1,60 +1,73 @@
-# cPanel Static Deployment & WordPress Setup Guide
+# cPanel Production Deployment & Setup Guide
 
-This guide walks through deploying the static Foodgo React storefront to **cPanel Shared Hosting / LiteSpeed / Apache** and connecting to WooCommerce.
+This guide details how to deploy the complete Foodgo production package to **cPanel** and connect it to your WordPress + WooCommerce store.
 
 ---
 
-## Deployment Steps
+## 1. Local Build
 
-### 1. Build the Frontend Locally
+On your development computer:
 ```bash
 npm install
 npm run build
 ```
 
-### 2. Upload to public_html via cPanel File Manager
+This generates the complete standalone production directory `dist/`.
+
+---
+
+## 2. Upload `dist/` Contents to cPanel `public_html`
+
+> ⚠️ **CRITICAL RULE**: Upload the **CONTENTS** of `dist/` directly into `public_html/`. Do NOT create `public_html/dist/`.
+
 1. Log in to your **cPanel dashboard**.
-2. Open **File Manager** and navigate into `public_html/` (or the document root of your subdomain).
-3. If an existing `index.html` or default page exists, delete or rename it.
-4. Upload and extract the contents of the `dist/` folder:
-   - `public_html/index.html`
-   - `public_html/assets/`
-   - `public_html/foodgo-headless-connector.zip`
-5. Upload the root files:
-   - `public_html/admin.php`
-   - `public_html/index.php`
-   - `public_html/.htaccess`
+2. Open **File Manager** and enter `public_html/` (or your subdomain document root).
+3. If necessary, zip the contents of your local `dist/` folder, upload `dist.zip` into `public_html/`, and extract it.
+4. Verify the root structure of `public_html/`:
+   ```text
+   public_html/
+   ├── index.html                     # Customer storefront SPA entry point
+   ├── admin.php                      # WordPress connection & diagnostic control panel
+   ├── .htaccess                      # DirectoryIndex index.html & SPA Rewrite Rules
+   ├── foodgo-headless-connector.zip  # WordPress plugin package
+   ├── assets/                        # Compiled JS, CSS, and images
+   └── config/                        # Protected server-side config directory
+   ```
+5. Ensure permissions:
+   - `public_html/config/` directory: `755`
+   - `.htaccess` and files: `644`
 
-### 3. Verify .htaccess for SPA Routes & PHP Gateway
-Ensure the `.htaccess` file inside `public_html/` contains the standard Foodgo rules:
-```apache
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-    RewriteBase /
+---
 
-    RewriteRule ^admin\.php$ - [L]
-    RewriteRule ^index\.php$ - [L]
-    RewriteRule ^foodgo-headless-connector\.zip$ - [L]
+## 3. Configure PHP in cPanel
 
-    RewriteCond %{REQUEST_FILENAME} -f [OR]
-    RewriteCond %{REQUEST_FILENAME} -d
-    RewriteRule ^ - [L]
+1. In cPanel, navigate to **Select PHP Version** or **MultiPHP Manager**.
+2. Set your domain to use **PHP 8.1**, **PHP 8.2**, or **PHP 8.3**.
+3. Under **PHP Extensions** (in PHP Selector), ensure the following are enabled:
+   - `curl` (Crucial for `admin.php` WordPress communication)
+   - `json` (Standard)
+   - `openssl` (Required for HTTPS SSL verification)
 
-    RewriteCond %{DOCUMENT_ROOT}/index.html -f
-    RewriteRule ^ index.html [L]
+---
 
-    RewriteRule ^ index.php [L]
-</IfModule>
-```
+## 4. Diagnostics & Testing
 
-### 4. Install Foodgo Headless Connector in WordPress
-1. In WordPress Admin (`/wp-admin`), go to **Plugins → Add New → Upload Plugin**.
-2. Upload `foodgo-headless-connector.zip`.
-3. Activate the plugin.
-4. Generate an Application Password under **Users → Profile**.
+1. Open `https://yourdomain.com/admin.php?health=1` in your browser:
+   - Verify **PHP Runtime**: Active
+   - Verify **PHP Version**: 8.x
+   - Verify **cURL**: Active
+   - Verify **OpenSSL**: Active
+   - Verify **Storage**: Writable
+2. If `admin.php` downloads instead of executing:
+   - Check **cPanel MultiPHP Manager** and ensure a valid PHP version is assigned to the domain handler.
 
-### 5. Finalize Connection
-1. Visit `https://yourdomain.com/admin.php`.
-2. Enter your WordPress URL, Username, and Application Password.
-3. Click **SAVE & CONNECT WORDPRESS**.
-4. Visit `https://yourdomain.com/` — your store will display all live products, categories, cart, and checkout seamlessly!
+---
+
+## 5. Connecting WordPress & WooCommerce
+
+1. Open `https://yourdomain.com/admin.php`.
+2. Click **DOWNLOAD PLUGIN (.ZIP)** to download `foodgo-headless-connector.zip`.
+3. In your WordPress site, install and activate the plugin via **Plugins → Add New → Upload Plugin**.
+4. In WordPress Admin, navigate to **Users → Profile → Application Passwords** and generate a new Application Password.
+5. In `admin.php`, enter your WordPress Site URL, Username, and Application Password, then click **CONNECT WORDPRESS**.
+6. Visit `https://yourdomain.com/` — your live customer ordering storefront is active.

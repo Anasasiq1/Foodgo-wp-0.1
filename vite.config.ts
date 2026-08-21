@@ -47,20 +47,64 @@ function foodgoAdminPlugin(): Plugin {
         if (pathname === '/admin.php') {
           const adminPath = path.resolve(__dirname, 'admin.php');
           if (fs.existsSync(adminPath)) {
+            let savedUrl = process.env.VITE_WP_URL || '';
+            let savedUser = '';
+            let isConnected = false;
+            const connectionFile = path.resolve(__dirname, 'config/connection.json');
+            if (fs.existsSync(connectionFile)) {
+              try {
+                const cfg = JSON.parse(fs.readFileSync(connectionFile, 'utf-8'));
+                if (cfg.wpUrl) savedUrl = cfg.wpUrl;
+                if (cfg.wpUsername) savedUser = cfg.wpUsername;
+                isConnected = !!cfg.connected;
+              } catch {}
+            }
+
+            // Support health check in Vite dev mode
+            if (searchParams.has('health')) {
+              const healthData = {
+                status: 'ok',
+                php_runtime: true,
+                php_version: '8.2.0 (Simulated Dev / PHP 8.1+ Production Target)',
+                php_supported: true,
+                extensions: {
+                  curl: true,
+                  json: true,
+                  openssl: true,
+                },
+                filesystem: {
+                  config_dir_exists: fs.existsSync(path.resolve(__dirname, 'config')),
+                  config_dir_writable: true,
+                  plugin_zip_present: fs.existsSync(path.resolve(__dirname, 'public/foodgo-headless-connector.zip')),
+                },
+                wordpress_connection: {
+                  configured: !!savedUrl,
+                  wp_url: savedUrl || null,
+                  rest_api_reachable: isConnected,
+                  woocommerce_store_api: isConnected,
+                  foodgo_connector_plugin: isConnected,
+                },
+                timestamp: new Date().toISOString(),
+              };
+
+              if (searchParams.get('health') === 'json' || req.headers.accept?.includes('application/json')) {
+                res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+                res.end(JSON.stringify(healthData, null, 2));
+                return;
+              }
+            }
+
             let content = fs.readFileSync(adminPath, 'utf-8');
             const htmlStart = content.indexOf('<!DOCTYPE html>');
             if (htmlStart !== -1) {
               let html = content.substring(htmlStart);
-              let savedUrl = process.env.VITE_WP_URL || '';
-              let savedUser = '';
-              const connectionFile = path.resolve(__dirname, 'config/connection.json');
-              if (fs.existsSync(connectionFile)) {
-                try {
-                  const cfg = JSON.parse(fs.readFileSync(connectionFile, 'utf-8'));
-                  if (cfg.wpUrl) savedUrl = cfg.wpUrl;
-                  if (cfg.wpUsername) savedUser = cfg.wpUsername;
-                } catch {}
-              }
+              html = html.replace(/<\?php echo esc_html\(PHP_VERSION\); \?>/g, '8.2.0');
+              html = html.replace(/<\?php echo function_exists\('curl_init'\) \? 'ok' : 'err'; \?>/g, 'ok');
+              html = html.replace(/<\?php echo function_exists\('curl_init'\) \? 'Active' : 'Missing'; \?>/g, 'Active');
+              html = html.replace(/<\?php echo extension_loaded\('openssl'\) \? 'ok' : 'err'; \?>/g, 'ok');
+              html = html.replace(/<\?php echo extension_loaded\('openssl'\) \? 'Active' : 'Missing'; \?>/g, 'Active');
+              html = html.replace(/<\?php echo \$configDirWritable \? 'ok' : 'err'; \?>/g, 'ok');
+              html = html.replace(/<\?php echo \$configDirWritable \? 'Writable' : 'Read-Only'; \?>/g, 'Writable');
               html = html.replace(/<\?php echo esc_attr\(\$savedConfig\['wpUrl'\]\); \?>/g, savedUrl);
               html = html.replace(/<\?php echo esc_attr\(\$savedConfig\['wpUsername'\]\); \?>/g, savedUser);
               html = html.replace(/<\?php echo !empty\(\$savedConfig\['wpAppPassword'\]\) \? '••••••••••••••••••••••••' : 'abcd efgh ijkl mnop qrst uvwx'; \?>/g, '••••••••••••••••••••••••');

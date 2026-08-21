@@ -371,6 +371,50 @@ app.get('/admin.php', (req, res) => {
     return servePluginZip(res);
   }
 
+  let savedUrl = process.env.VITE_WP_URL || '';
+  let savedUser = '';
+  let isConnected = false;
+  if (fs.existsSync(connectionConfigFile)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(connectionConfigFile, 'utf-8'));
+      if (cfg.wpUrl) savedUrl = cfg.wpUrl;
+      if (cfg.wpUsername) savedUser = cfg.wpUsername;
+      isConnected = !!cfg.connected;
+    } catch {}
+  }
+
+  // Health check endpoint support
+  if (req.query.health !== undefined) {
+    const healthData = {
+      status: 'ok',
+      php_runtime: true,
+      php_version: '8.2.0 (Simulated Dev / PHP 8.1+ Production Target)',
+      php_supported: true,
+      extensions: {
+        curl: true,
+        json: true,
+        openssl: true,
+      },
+      filesystem: {
+        config_dir_exists: fs.existsSync(configDir),
+        config_dir_writable: true,
+        plugin_zip_present: fs.existsSync(pluginZipPath),
+      },
+      wordpress_connection: {
+        configured: !!savedUrl,
+        wp_url: savedUrl || null,
+        rest_api_reachable: isConnected,
+        woocommerce_store_api: isConnected,
+        foodgo_connector_plugin: isConnected,
+      },
+      timestamp: new Date().toISOString(),
+    };
+
+    if (req.query.health === 'json' || req.headers.accept?.includes('application/json')) {
+      return res.json(healthData);
+    }
+  }
+
   const adminPhpPath = path.join(baseDir, 'admin.php');
   if (fs.existsSync(adminPhpPath)) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -378,15 +422,13 @@ app.get('/admin.php', (req, res) => {
     const htmlStart = content.indexOf('<!DOCTYPE html>');
     if (htmlStart !== -1) {
       let html = content.substring(htmlStart);
-      let savedUrl = process.env.VITE_WP_URL || '';
-      let savedUser = '';
-      if (fs.existsSync(connectionConfigFile)) {
-        try {
-          const cfg = JSON.parse(fs.readFileSync(connectionConfigFile, 'utf-8'));
-          if (cfg.wpUrl) savedUrl = cfg.wpUrl;
-          if (cfg.wpUsername) savedUser = cfg.wpUsername;
-        } catch {}
-      }
+      html = html.replace(/<\?php echo esc_html\(PHP_VERSION\); \?>/g, '8.2.0');
+      html = html.replace(/<\?php echo function_exists\('curl_init'\) \? 'ok' : 'err'; \?>/g, 'ok');
+      html = html.replace(/<\?php echo function_exists\('curl_init'\) \? 'Active' : 'Missing'; \?>/g, 'Active');
+      html = html.replace(/<\?php echo extension_loaded\('openssl'\) \? 'ok' : 'err'; \?>/g, 'ok');
+      html = html.replace(/<\?php echo extension_loaded\('openssl'\) \? 'Active' : 'Missing'; \?>/g, 'Active');
+      html = html.replace(/<\?php echo \$configDirWritable \? 'ok' : 'err'; \?>/g, 'ok');
+      html = html.replace(/<\?php echo \$configDirWritable \? 'Writable' : 'Read-Only'; \?>/g, 'Writable');
       html = html.replace(/<\?php echo esc_attr\(\$savedConfig\['wpUrl'\]\); \?>/g, savedUrl);
       html = html.replace(/<\?php echo esc_attr\(\$savedConfig\['wpUsername'\]\); \?>/g, savedUser);
       html = html.replace(/<\?php echo !empty\(\$savedConfig\['wpAppPassword'\]\) \? '••••••••••••••••••••••••' : 'abcd efgh ijkl mnop qrst uvwx'; \?>/g, '••••••••••••••••••••••••');

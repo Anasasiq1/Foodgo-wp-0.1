@@ -1,48 +1,80 @@
 <?php
 /**
- * Foodgo - WordPress Connection / Integration Control Panel
+ * Foodgo - WordPress Connection & Integration Control Panel
  * 
  * IMPORTANT: admin.php is ONLY for connecting Foodgo to WordPress + WooCommerce.
  * It is NOT a commerce management panel. All products, orders, inventory, 
  * and customer management are handled inside WordPress / WooCommerce Admin.
  */
 
-define('FOODGO_ACCESS', true);
+// 1. Safe Helper Functions (Self-contained, no external WordPress dependency required)
+if (!function_exists('esc_html')) {
+    function esc_html($text) {
+        return htmlspecialchars((string)$text, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('esc_attr')) {
+    function esc_attr($text) {
+        return htmlspecialchars((string)$text, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('esc_url')) {
+    function esc_url($url) {
+        return filter_var($url, FILTER_SANITIZE_URL);
+    }
+}
 
 $baseDir = __DIR__;
-$configFile = $baseDir . '/config/connection.json';
-$publicConfigFile = $baseDir . '/config/connection-public.json';
-$pluginZipFile = $baseDir . '/public/foodgo-headless-connector.zip';
+$configDir = $baseDir . '/config';
+$configFile = $configDir . '/connection.json';
+$publicConfigFile = $configDir . '/connection-public.json';
+
+// Locate the plugin zip file
+$pluginZipFile = $baseDir . '/foodgo-headless-connector.zip';
 if (!file_exists($pluginZipFile)) {
-    $pluginZipFile = $baseDir . '/foodgo-headless-connector.zip';
+    $pluginZipFile = $baseDir . '/public/foodgo-headless-connector.zip';
 }
 
-// Ensure config dir exists
-if (!is_dir($baseDir . '/config')) {
-    @mkdir($baseDir . '/config', 0755, true);
+// Ensure config dir exists and create security .htaccess
+$configDirWritable = true;
+if (!is_dir($configDir)) {
+    if (!@mkdir($configDir, 0755, true)) {
+        $configDirWritable = false;
+    }
+} else {
+    $configDirWritable = is_writable($configDir);
 }
 
-// Handle plugin download request
-if (isset($_GET['download_plugin'])) {
+if (is_dir($configDir) && !file_exists($configDir . '/.htaccess')) {
+    $configHtaccess = "<FilesMatch \"^(?!connection-public\\.json$).*\\.json$\">\n    <IfModule mod_authz_core.c>\n        Require all denied\n    </IfModule>\n    <IfModule !mod_authz_core.c>\n        Deny from all\n    </IfModule>\n</FilesMatch>\n";
+    @file_put_contents($configDir . '/.htaccess', $configHtaccess);
+}
+
+// 2. Handle Plugin Download Request
+if (isset($_GET['download_plugin']) || isset($_GET['download']) || (isset($_GET['action']) && $_GET['action'] === 'download')) {
     if (file_exists($pluginZipFile)) {
         header('Content-Type: application/zip');
         header('Content-Disposition: attachment; filename="foodgo-headless-connector.zip"');
         header('Content-Length: ' . filesize($pluginZipFile));
         header('Pragma: no-cache');
+        header('Cache-Control: no-store, no-cache, must-revalidate');
         readfile($pluginZipFile);
         exit;
     } else {
         header('HTTP/1.1 404 Not Found');
-        die('Foodgo Headless Connector ZIP file not found. Please build or place it in the public directory.');
+        die('Foodgo Headless Connector ZIP file not found. Please build or place foodgo-headless-connector.zip in the document root.');
     }
 }
 
-// Load existing saved connection settings (server-side only)
+// 3. Load Existing Server-side Saved Config
 $savedConfig = [
     'wpUrl' => getenv('VITE_WP_URL') ?: '',
     'wpUsername' => getenv('WP_USERNAME') ?: '',
     'wpAppPassword' => getenv('WP_APP_PASSWORD') ?: '',
     'lastTested' => null,
+    'connected' => false,
 ];
 
 if (file_exists($configFile)) {
@@ -52,12 +84,20 @@ if (file_exists($configFile)) {
     }
 }
 
-$notice = null;
-$noticeType = 'info';
-$testResults = null;
-
+// 4. Robust HTTP Testing Function with Full SSL & Error Reporting
 function testUrl($url, $username = '', $appPassword = '') {
-    if (empty($url)) return ['success' => false, 'code' => 0, 'data' => null, 'error' => 'URL is empty'];
+    if (empty($url)) {
+        return ['success' => false, 'code' => 0, 'data' => null, 'error' => 'URL is empty'];
+    }
+
+    if (!function_exists('curl_init')) {
+        return [
+            'success' => false,
+            'code' => 0,
+            'data' => null,
+            'error' => 'PHP cURL extension is missing. Please enable php-curl in your web hosting control panel.',
+        ];
+    }
     
     $headers = [
         'User-Agent: Foodgo-Connector/3.0',
@@ -73,105 +113,190 @@ function testUrl($url, $username = '', $appPassword = '') {
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    // Strict SSL verification in production
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
+    $curlErrorNo = curl_errno($ch);
+    $curlErrorMsg = curl_error($ch);
     curl_close($ch);
 
-    if ($error) {
-        return ['success' => false, 'code' => $httpCode, 'data' => null, 'error' => $error];
+    if ($curlErrorNo !== 0) {
+        $errorMsg = $curlErrorMsg;
+        if (strpos(strtolower($curlErrorMsg), 'ssl') !== false || strpos(strtolower($curlErrorMsg), 'certificate') !== false) {
+            $errorMsg = 'SSL Handshake Error: Invalid or untrusted HTTPS SSL certificate on WordPress host (' . $curlErrorMsg . ')';
+        }
+        return ['success' => false, 'code' => $httpCode, 'data' => null, 'error' => $errorMsg];
     }
 
     $json = json_decode($response, true);
     $isSuccess = ($httpCode >= 200 && $httpCode < 300);
 
-    return ['success' => $isSuccess, 'code' => $httpCode, 'data' => $json, 'raw' => $response];
+    return [
+        'success' => $isSuccess,
+        'code' => $httpCode,
+        'data' => $json,
+        'raw' => $response,
+        'error' => $isSuccess ? null : ('HTTP ' . $httpCode)
+    ];
 }
 
-// Handle Form Submission (Save & Connect or Test)
+// 5. System Health Check (?health=1 or ?health=json)
+if (isset($_GET['health'])) {
+    $phpVersion = PHP_VERSION;
+    $hasCurl = function_exists('curl_init');
+    $hasJson = function_exists('json_encode');
+    $hasOpenSsl = extension_loaded('openssl');
+    $hasZip = file_exists($pluginZipFile);
+
+    // Optional quick test against configured WP if present
+    $wpReachable = false;
+    $wcReachable = false;
+    $pluginReachable = false;
+
+    if (!empty($savedConfig['wpUrl']) && $hasCurl) {
+        $quickWp = testUrl($savedConfig['wpUrl'] . '/wp-json/', $savedConfig['wpUsername'], $savedConfig['wpAppPassword']);
+        $wpReachable = $quickWp['success'];
+        if ($wpReachable) {
+            $quickWc = testUrl($savedConfig['wpUrl'] . '/wp-json/wc/store/v1/products?per_page=1', $savedConfig['wpUsername'], $savedConfig['wpAppPassword']);
+            $wcReachable = $quickWc['success'];
+            $quickPlugin = testUrl($savedConfig['wpUrl'] . '/wp-json/foodgo/v1/config', $savedConfig['wpUsername'], $savedConfig['wpAppPassword']);
+            $pluginReachable = $quickPlugin['success'];
+        }
+    }
+
+    $healthData = [
+        'status' => 'ok',
+        'php_runtime' => true,
+        'php_version' => $phpVersion,
+        'php_supported' => version_compare($phpVersion, '7.4.0', '>='),
+        'extensions' => [
+            'curl' => $hasCurl,
+            'json' => $hasJson,
+            'openssl' => $hasOpenSsl,
+        ],
+        'filesystem' => [
+            'config_dir_exists' => is_dir($configDir),
+            'config_dir_writable' => $configDirWritable,
+            'plugin_zip_present' => $hasZip,
+        ],
+        'wordpress_connection' => [
+            'configured' => !empty($savedConfig['wpUrl']),
+            'wp_url' => !empty($savedConfig['wpUrl']) ? $savedConfig['wpUrl'] : null,
+            'rest_api_reachable' => $wpReachable,
+            'woocommerce_store_api' => $wcReachable,
+            'foodgo_connector_plugin' => $pluginReachable,
+        ],
+        'timestamp' => date('c'),
+    ];
+
+    if ($_GET['health'] === 'json' || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false)) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($healthData, JSON_PRETTY_PRINT);
+        exit;
+    }
+}
+
+// 6. Handle Form Submission (Save & Connect or Test)
+$notice = null;
+$noticeType = 'info';
+$testResults = null;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? 'connect';
     $wpUrl = rtrim(trim($_POST['wp_url'] ?? ''), '/');
     $wpUsername = trim($_POST['wp_username'] ?? '');
     $wpAppPassword = trim($_POST['wp_app_password'] ?? '');
 
-    // If password was submitted with placeholder asterisks and we have existing password, preserve it
-    if (strpos($wpAppPassword, '***') !== false && !empty($savedConfig['wpAppPassword'])) {
+    // Preserve password if submitting masked placeholder
+    if (strpos($wpAppPassword, '•') !== false && !empty($savedConfig['wpAppPassword'])) {
         $wpAppPassword = $savedConfig['wpAppPassword'];
     }
 
-    // Run Diagnostics
-    $wpCoreTest = testUrl($wpUrl . '/wp-json/', $wpUsername, $wpAppPassword);
-    $wcStoreTest = testUrl($wpUrl . '/wp-json/wc/store/v1/products?per_page=1', $wpUsername, $wpAppPassword);
-    $foodgoPluginTest = testUrl($wpUrl . '/wp-json/foodgo/v1/config', $wpUsername, $wpAppPassword);
-    $wcRestTest = testUrl($wpUrl . '/wp-json/wc/v3/system_status', $wpUsername, $wpAppPassword);
-
-    $testResults = [
-        'wpCore' => [
-            'name' => 'WordPress Core REST API',
-            'endpoint' => '/wp-json/',
-            'connected' => $wpCoreTest['success'],
-            'code' => $wpCoreTest['code'],
-            'details' => $wpCoreTest['success'] ? 'WordPress REST engine reachable' : ($wpCoreTest['error'] ?: 'HTTP ' . $wpCoreTest['code'])
-        ],
-        'wcStore' => [
-            'name' => 'WooCommerce Store API',
-            'endpoint' => '/wp-json/wc/store/v1/products',
-            'connected' => $wcStoreTest['success'],
-            'code' => $wcStoreTest['code'],
-            'details' => $wcStoreTest['success'] ? 'Store API active & returning catalog data' : 'Not reachable (HTTP ' . $wcStoreTest['code'] . ')'
-        ],
-        'foodgoPlugin' => [
-            'name' => 'Foodgo Headless Connector',
-            'endpoint' => '/wp-json/foodgo/v1/config',
-            'connected' => $foodgoPluginTest['success'],
-            'code' => $foodgoPluginTest['code'],
-            'details' => $foodgoPluginTest['success'] ? 'Bridge plugin active & providing config' : 'Plugin endpoint not found (HTTP ' . $foodgoPluginTest['code'] . ')'
-        ],
-        'wooCommerce' => [
-            'name' => 'WooCommerce Core Engine',
-            'endpoint' => '/wp-json/wc/store/v1/cart',
-            'connected' => $wcStoreTest['success'] || $wcRestTest['success'],
-            'code' => $wcStoreTest['code'],
-            'details' => ($wcStoreTest['success'] || $wcRestTest['success']) ? 'WooCommerce commerce platform detected' : 'WooCommerce not active'
-        ]
-    ];
-
-    if ($action === 'connect') {
-        // Save server-side
-        $newConfig = [
-            'wpUrl' => $wpUrl,
-            'wpUsername' => $wpUsername,
-            'wpAppPassword' => $wpAppPassword,
-            'lastTested' => date('Y-m-d H:i:s'),
-            'connected' => $testResults['wpCore']['connected'] && $testResults['wcStore']['connected']
-        ];
-        @file_put_contents($configFile, json_encode($newConfig, JSON_PRETTY_PRINT));
-
-        // Save public config WITHOUT any passwords or sensitive info
-        $publicConfig = [
-            'wpUrl' => $wpUrl,
-            'connected' => $newConfig['connected'],
-            'foodgoPlugin' => $testResults['foodgoPlugin']['connected']
-        ];
-        @file_put_contents($publicConfigFile, json_encode($publicConfig, JSON_PRETTY_PRINT));
-
-        $savedConfig = $newConfig;
-
-        if ($newConfig['connected']) {
-            $notice = 'Connection configuration saved successfully! WordPress and WooCommerce are connected.';
-            $noticeType = 'success';
-        } else {
-            $notice = 'Connection saved, but some endpoints could not be reached. Please check the URL and credentials below.';
-            $noticeType = 'warning';
-        }
+    // Check cURL extension before running tests
+    if (!function_exists('curl_init')) {
+        $notice = 'PHP cURL extension is missing on this server. Please enable php-curl in your web hosting control panel.';
+        $noticeType = 'warning';
     } else {
-        $notice = 'Connection test completed. See diagnostic status below.';
-        $noticeType = 'info';
+        // Run Complete Diagnostics
+        $wpCoreTest = testUrl($wpUrl . '/wp-json/', $wpUsername, $wpAppPassword);
+        $wcStoreTest = testUrl($wpUrl . '/wp-json/wc/store/v1/products?per_page=1', $wpUsername, $wpAppPassword);
+        $foodgoPluginTest = testUrl($wpUrl . '/wp-json/foodgo/v1/config', $wpUsername, $wpAppPassword);
+        $wcCartTest = testUrl($wpUrl . '/wp-json/wc/store/v1/cart', $wpUsername, $wpAppPassword);
+
+        $testResults = [
+            'wpCore' => [
+                'name' => 'WordPress Core REST API',
+                'endpoint' => '/wp-json/',
+                'connected' => $wpCoreTest['success'],
+                'code' => $wpCoreTest['code'],
+                'details' => $wpCoreTest['success'] ? 'WordPress REST engine reachable' : ($wpCoreTest['error'] ?: 'HTTP ' . $wpCoreTest['code'])
+            ],
+            'wcStore' => [
+                'name' => 'WooCommerce Store API',
+                'endpoint' => '/wp-json/wc/store/v1/products',
+                'connected' => $wcStoreTest['success'],
+                'code' => $wcStoreTest['code'],
+                'details' => $wcStoreTest['success'] ? 'Store API active & returning catalog' : ($wcStoreTest['error'] ?: 'Not reachable (HTTP ' . $wcStoreTest['code'] . ')')
+            ],
+            'foodgoPlugin' => [
+                'name' => 'Foodgo Headless Connector',
+                'endpoint' => '/wp-json/foodgo/v1/config',
+                'connected' => $foodgoPluginTest['success'],
+                'code' => $foodgoPluginTest['code'],
+                'details' => $foodgoPluginTest['success'] ? 'Bridge plugin active & providing config' : ($foodgoPluginTest['error'] ?: 'Plugin endpoint not found (HTTP ' . $foodgoPluginTest['code'] . ')')
+            ],
+            'wooCommerce' => [
+                'name' => 'WooCommerce Core Engine',
+                'endpoint' => '/wp-json/wc/store/v1/cart',
+                'connected' => $wcStoreTest['success'] || $wcCartTest['success'],
+                'code' => $wcStoreTest['code'] ?: $wcCartTest['code'],
+                'details' => ($wcStoreTest['success'] || $wcCartTest['success']) ? 'WooCommerce commerce platform active' : 'WooCommerce Store API not responding'
+            ]
+        ];
+
+        if ($action === 'connect') {
+            $isConn = $testResults['wpCore']['connected'] && $testResults['wcStore']['connected'];
+            
+            $newConfig = [
+                'wpUrl' => $wpUrl,
+                'wpUsername' => $wpUsername,
+                'wpAppPassword' => $wpAppPassword,
+                'lastTested' => date('Y-m-d H:i:s'),
+                'connected' => $isConn,
+            ];
+
+            if ($configDirWritable) {
+                @file_put_contents($configFile, json_encode($newConfig, JSON_PRETTY_PRINT));
+
+                // Save public config WITHOUT sensitive credentials
+                $publicConfig = [
+                    'wpUrl' => $wpUrl,
+                    'connected' => $isConn,
+                    'foodgoPlugin' => $testResults['foodgoPlugin']['connected']
+                ];
+                @file_put_contents($publicConfigFile, json_encode($publicConfig, JSON_PRETTY_PRINT));
+                $savedConfig = $newConfig;
+            } else {
+                $notice = 'Warning: config directory is not writable. Settings could not be persisted to disk.';
+                $noticeType = 'warning';
+            }
+
+            if ($isConn) {
+                $notice = 'Connection configuration saved successfully! WordPress and WooCommerce are connected.';
+                $noticeType = 'success';
+            } else {
+                $notice = 'Connection saved, but some endpoints could not be reached. Review the diagnostics below.';
+                $noticeType = 'warning';
+            }
+        } else {
+            $notice = 'Connection test completed. See diagnostic status below.';
+            $noticeType = 'info';
+        }
     }
 }
 ?>
@@ -468,6 +593,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             line-height: 1.3;
         }
 
+        .health-bar {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 14px;
+            padding: 14px 18px;
+            margin-bottom: 20px;
+            color: #D1D5DB;
+            font-size: 12px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .health-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .health-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .health-dot.ok { background: #10B981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.6); }
+        .health-dot.err { background: #EF4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.6); }
+
         .plugin-box {
             background: #FAF5FF;
             border: 1px solid #E9D5FF;
@@ -510,8 +665,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <header class="header">
         <div class="brand-badge">⚡ Foodgo Headless Bridge</div>
         <h1 class="title">WordPress Connection</h1>
-        <p class="subtitle">Connect your Foodgo customer frontend directly to your WordPress + WooCommerce store.</p>
+        <p class="subtitle">Connect your Foodgo customer storefront directly to your WordPress + WooCommerce backend.</p>
     </header>
+
+    <!-- System Runtime Health Bar -->
+    <div class="health-bar">
+        <div class="health-item">
+            <span class="health-dot ok"></span>
+            <span>PHP <?php echo esc_html(PHP_VERSION); ?></span>
+        </div>
+        <div class="health-item">
+            <span class="health-dot <?php echo function_exists('curl_init') ? 'ok' : 'err'; ?>"></span>
+            <span>cURL: <?php echo function_exists('curl_init') ? 'Active' : 'Missing'; ?></span>
+        </div>
+        <div class="health-item">
+            <span class="health-dot <?php echo extension_loaded('openssl') ? 'ok' : 'err'; ?>"></span>
+            <span>OpenSSL: <?php echo extension_loaded('openssl') ? 'Active' : 'Missing'; ?></span>
+        </div>
+        <div class="health-item">
+            <span class="health-dot <?php echo $configDirWritable ? 'ok' : 'err'; ?>"></span>
+            <span>Storage: <?php echo $configDirWritable ? 'Writable' : 'Read-Only'; ?></span>
+        </div>
+        <a href="admin.php?health=json" target="_blank" style="color: #9CA3AF; text-decoration: underline; margin-left: auto;">Health JSON API &rarr;</a>
+    </div>
 
     <?php if ($notice): ?>
         <div class="notice notice-<?php echo esc_attr($noticeType); ?>">
@@ -600,14 +776,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <p class="plugin-box-desc">
                 Install this official plugin on your WordPress site to enable automatic frontend discovery, line item spice level/curry customization, and kitchen logistics.
             </p>
-            <a href="/foodgo-headless-connector.zip" download="foodgo-headless-connector.zip" class="btn btn-download" id="downloadPluginBtn">
+            <a href="admin.php?download_plugin=1" download="foodgo-headless-connector.zip" class="btn btn-download" id="downloadPluginBtn">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 DOWNLOAD PLUGIN (.ZIP)
             </a>
             <div style="display: flex; justify-content: center; gap: 16px; margin-top: 10px; font-size: 12px;">
-                <a href="admin.php?download_plugin=1" download="foodgo-headless-connector.zip" style="color: #6B21A8; font-weight: 700; text-decoration: underline;">Direct Link 1</a>
+                <a href="admin.php?download_plugin=1" download="foodgo-headless-connector.zip" style="color: #6B21A8; font-weight: 700; text-decoration: underline;">Direct Link (admin.php)</a>
                 <span style="color: #D8B4FE;">•</span>
-                <a href="/api/download-plugin" download="foodgo-headless-connector.zip" style="color: #6B21A8; font-weight: 700; text-decoration: underline;">Direct Link 2 (API)</a>
+                <a href="/foodgo-headless-connector.zip" download="foodgo-headless-connector.zip" style="color: #6B21A8; font-weight: 700; text-decoration: underline;">Static File Link</a>
             </div>
         </div>
     </main>

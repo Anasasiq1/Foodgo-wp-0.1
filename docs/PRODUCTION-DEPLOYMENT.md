@@ -1,52 +1,63 @@
-# Production Deployment Guide
+# Production Deployment Architecture & Workflow
 
-## Core Architectural Principle: 100% Static Deployment
-
-The customer-facing Foodgo storefront is a pure client-side Single Page Application (SPA).
-- **NO Node.js / Express** is required on your shared hosting or production web server.
-- **NO PM2 process manager** is required for the storefront.
-- **NO terminal or SSH access** is mandatory.
+This document details the production build pipeline and deployment model for Foodgo.
 
 ---
 
-## Production Deployment Checklist
+## 1. Single Authoritative Entry Point Architecture
 
-### Step 1: Run Local Build
+- **Customer Storefront**: `index.html` (Vite compiled React SPA).
+- **WordPress Connection & Diagnostics**: `admin.php` (Independent PHP script).
+- **Commerce Engine**: WordPress + WooCommerce (REST / Store API).
+- **Bridge Plugin**: `foodgo-headless-connector.zip`.
+- **Database**: WordPress MySQL database (No secondary database or Node server in production).
+
+---
+
+## 2. Automated Production Build (`npm run build`)
+
+Running:
 ```bash
-npm install
 npm run build
 ```
-This produces the self-contained `dist/` directory.
 
-### Step 2: Understand File Structure
-Inside `dist/`:
+Executes the automated pipeline in `scripts/build-production.ts`:
+1. Cleans previous `dist/`.
+2. Packages the WordPress plugin `foodgo-headless-connector.zip`.
+3. Runs `vite build` to compile React frontend to `dist/`.
+4. Copies `admin.php` directly into `dist/admin.php`.
+5. Copies `.htaccess` into `dist/.htaccess`.
+6. Copies `foodgo-headless-connector.zip` into `dist/foodgo-headless-connector.zip`.
+7. Creates `dist/config/` with a security `.htaccess` preventing direct HTTP access to credentials.
+8. Automatically validates all required files, bundle sizes, JS/CSS assets, and exits with code 0.
+
+---
+
+## 3. Server Deployment (aaPanel / cPanel / Apache / Nginx / LiteSpeed)
+
+Upload the **CONTENTS of `dist/`** directly to the website root:
+
 ```text
-dist/
-├── assets/
-│   ├── index-[hash].js
-│   └── index-[hash].css
-├── foodgo-headless-connector.zip
-└── index.html
+DOCUMENT ROOT (/www/wwwroot/domain.com/ or public_html/)
+│
+├── index.html                     # Customer Storefront (Default DirectoryIndex)
+├── admin.php                      # WordPress Connection Gateway
+├── .htaccess                      # Security & SPA Rewrite rules
+├── foodgo-headless-connector.zip  # Downloadable WordPress Plugin
+│
+├── assets/                        # Compiled JavaScript & CSS bundles
+│   ├── index-*.js
+│   └── index-*.css
+│
+└── config/                        # Server-side persistent storage
+    └── .htaccess                  # Access-denied rules for connection.json
 ```
 
-### Step 3: Direct Upload to Document Root
-Using **aaPanel File Manager**, **cPanel File Manager**, or **FTP/SFTP**, copy the **contents of `dist/`** into your website document root:
-- Copy `dist/index.html` → `/www/wwwroot/domain.com/index.html` or `public_html/index.html`
-- Copy `dist/assets/` → `/www/wwwroot/domain.com/assets/` or `public_html/assets/`
-- Copy `dist/foodgo-headless-connector.zip` → `/www/wwwroot/domain.com/foodgo-headless-connector.zip`
-- Also upload `admin.php`, `index.php`, and `.htaccess` to the document root.
+---
 
-### Step 4: Web Server URL Rewriting
-For Apache or LiteSpeed, the included `.htaccess` file handles fallback to `index.html` for SPA routing.
-For Nginx (aaPanel), configure:
-```nginx
-location / {
-    try_files $uri $uri/ /index.html;
-}
-location ~ \.php$ {
-    include enable-php-81.conf;
-}
-```
+## 4. Verification Check
 
-### Step 5: Connect WordPress
-Visit `https://your-domain.com/admin.php` and submit your WordPress API URL, Username, and Application Password to complete setup.
+After uploading:
+1. `https://domain.com/` → Customer Storefront loads immediately.
+2. `https://domain.com/admin.php?health=1` → System health JSON/table shows PHP 8.x, cURL, OpenSSL, and storage OK.
+3. `https://domain.com/admin.php` → Connection Control Panel allows linking to WordPress with an Application Password.
