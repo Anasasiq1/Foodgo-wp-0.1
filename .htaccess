@@ -22,12 +22,8 @@ DirectoryIndex index.html
     RewriteRule ^ - [L]
 
     # 4. SPA Route Fallback:
-    # Route all frontend client routes directly to index.html
-    RewriteCond %{DOCUMENT_ROOT}/index.html -f
-    RewriteRule ^ index.html [L]
-
-    # Subfolder / general fallback
-    RewriteRule ^ index.html [L]
+    # Route all non-file frontend client requests directly to index.html
+    RewriteRule . index.html [L]
 </IfModule>
 
 # Prevent directory index browsing
@@ -44,7 +40,7 @@ Options -Indexes
     </IfModule>
 </FilesMatch>
 
-# Block access to JSON, SQL, log, and configuration files directly (except connection-public.json)
+# Block access to sensitive JSON, SQL, log, and configuration files directly (except connection-public.json)
 <FilesMatch "^(?!connection-public\.json$).*\.(json|sql|lock|log|sh|env)$">
     <IfModule mod_authz_core.c>
         Require all denied
