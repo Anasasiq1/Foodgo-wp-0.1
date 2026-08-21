@@ -3,18 +3,20 @@
 # ==============================================================================
 
 # Explicitly set index.html as the primary customer application entry point
-DirectoryIndex index.html
+DirectoryIndex index.html index.php
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteBase /
 
-    # 1. Protect hidden files, environment files, and sensitive directories
-    RewriteRule ^(\.git|\.env|config/\.htaccess|database/|storage/|data/|backups/) - [F,L,NC]
-
-    # 2. Allow direct execution of WordPress Admin Gateway and Plugin ZIP
+    # 1. Allow direct execution of WordPress Admin Gateway, plugin, and public config
     RewriteRule ^admin\.php$ - [L]
     RewriteRule ^foodgo-headless-connector\.zip$ - [L]
+    RewriteRule ^config/connection-public\.json$ - [L]
+
+    # 2. Block sensitive files & folders
+    RewriteRule ^config/connection\.json$ - [F,L,NC]
+    RewriteRule ^(\.git|\.env|package\.json|tsconfig\.json|server\.ts) - [F,L,NC]
 
     # 3. If requested resource is an existing file or directory, serve it directly
     RewriteCond %{REQUEST_FILENAME} -f [OR]
@@ -26,8 +28,10 @@ DirectoryIndex index.html
     RewriteRule . index.html [L]
 </IfModule>
 
-# Prevent directory index browsing
-Options -Indexes
+# Prevent directory index browsing safely
+<IfModule mod_autoindex.c>
+    Options -Indexes
+</IfModule>
 
 # Block access to hidden files (.env, .git, etc.)
 <FilesMatch "^\.">
@@ -40,8 +44,8 @@ Options -Indexes
     </IfModule>
 </FilesMatch>
 
-# Block access to sensitive JSON, SQL, log, and configuration files directly (except connection-public.json)
-<FilesMatch "^(?!connection-public\.json$).*\.(json|sql|lock|log|sh|env)$">
+# Block access to sensitive file extensions (safe syntax without unsupported regex lookarounds)
+<FilesMatch "\.(env|sql|log|sh|lock|ts|tsx)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -51,10 +55,22 @@ Options -Indexes
     </IfModule>
 </FilesMatch>
 
+# Specifically protect the connection.json file
+<Files "connection.json">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</Files>
+
 # Custom security headers
 <IfModule mod_headers.c>
     Header set X-Content-Type-Options "nosniff"
     Header set X-Frame-Options "SAMEORIGIN"
     Header set X-XSS-Protection "1; mode=block"
 </IfModule>
+
 

@@ -58,7 +58,7 @@ async function runProductionBuild() {
   if (!fs.existsSync(distConfigDir)) {
     fs.mkdirSync(distConfigDir, { recursive: true });
   }
-  const configHtaccess = `<FilesMatch "^(?!connection-public\\.json$).*\\.json$">\n    <IfModule mod_authz_core.c>\n        Require all denied\n    </IfModule>\n    <IfModule !mod_authz_core.c>\n        Deny from all\n    </IfModule>\n</FilesMatch>\n`;
+  const configHtaccess = `# Protect sensitive configuration\n<Files "connection.json">\n    <IfModule mod_authz_core.c>\n        Require all denied\n    </IfModule>\n    <IfModule !mod_authz_core.c>\n        Deny from all\n    </IfModule>\n</Files>\n`;
   fs.writeFileSync(path.join(distConfigDir, '.htaccess'), configHtaccess, 'utf-8');
   console.log('  → Created: dist/config/.htaccess (Secured configuration storage)');
 
